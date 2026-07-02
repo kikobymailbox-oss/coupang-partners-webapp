@@ -287,7 +287,7 @@ _THUMBNAIL_WIDGET_HTML = """<!DOCTYPE html>
       setMsg("크롬 브라우저에서, 확장 프로그램을 설치한 뒤 이용해주세요.", "error");
       return;
     }
-    setMsg("이미지를 가져오는 중입니다... (몇 초 걸릴 수 있어요)");
+    setMsg("이미지를 가져오는 중입니다... (드물게 최대 15초 정도 걸릴 수 있어요)");
     chrome.runtime.sendMessage(EXT_ID, { type: "EXTRACT_URL", url: url }, function (resp) {
       if (chrome.runtime.lastError) {
         setMsg("확장 프로그램을 찾을 수 없습니다. 설치되어 있는지 확인해주세요.", "error");
