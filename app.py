@@ -359,16 +359,11 @@ def main():
 
         st.divider()
         if ext_installed:
-            if st.button("🧩 확장 설치 안내"):
+            if st.button("🖼️ 썸네일 다운로더"):
                 _install_guide_dialog(ext_url)
         else:
-            if st.button("⚠️ 확장 설치 안내 (필요)", type="primary"):
+            if st.button("⚠️ 썸네일 다운로더 (설치 필요)", type="primary"):
                 _install_guide_dialog(ext_url)
-
-    # 확장이 없으면(또는 판단 전이면) 첫 방문 시 한 번은 안내를 자동으로 띄운다.
-    if not ext_installed and not st.session_state.get("guide_auto_shown"):
-        st.session_state.guide_auto_shown = True
-        _install_guide_dialog(ext_url)
 
     tab_titles = ["파트너스 링크"]
     if is_manager:
