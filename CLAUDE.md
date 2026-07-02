@@ -4,12 +4,12 @@
 
 ## 목적
 쿠팡 파트너스 팀 내부용 도구. 하이브리드 구조. **로그인 없음** — URL 쿼리파라미터로 매니저/팀원 구분.
-1. 파트너스 링크 변환 — 링크 입력 → [생성하기] → 변환(서버) + 클릭복사
-2. 썸네일 — 웹앱은 "상품 페이지 열기" 버튼만 제공, **실제 추출·다운로드는 사용자가 그 페이지에서 확장 아이콘을 직접 클릭**(자동화 아님 — 이유는 아래 불변식 참고)
+1. 파트너스 링크 변환 — 링크 입력 → [생성하기] → 변환(서버) + 클릭복사. 웹앱은 이것만 한다.
+2. 썸네일 — **웹앱에 없음.** 링크를 만들려면 어차피 쿠팡 상품 페이지를 이미 열어본 상태이므로, 그 페이지에서 크롬 확장 아이콘을 직접 클릭해 받는다(자동화 아님 — 이유는 아래 불변식 참고). 최초 1회 확장 설치 안내만 사이드바 모달로 제공.
 3. API키 관리 — `?admin=<MANAGER_TOKEN>` 일 때만 보임, 팀원은 키 미노출 (웹앱/서버)
 
 ## 구조
-- `app.py` Streamlit UI (`_is_manager()`로 URL 쿼리파라미터 판별·`convert_view`(링크변환)·`_render_thumbnail_instructions`(상품페이지 열기 안내)·`_install_guide_dialog`(모달, 사이드바에서 호출)·`api_key_view`)
+- `app.py` Streamlit UI (`_is_manager()`로 URL 쿼리파라미터 판별·`convert_view`(링크변환 전용)·`_install_guide_dialog`(확장 설치 모달, 사이드바에서 호출)·`api_key_view`)
 - `coupang_api.py` 딥링크 HMAC 서명·호출 (서버 전용)
 - `storage.py` 저장소 추상화 (Supabase REST / 로컬 JSON 자동 선택) — 슬롯만 다룸, 라이센스 없음
 - `schema.sql` Supabase `cp_slots` 테이블 (라이센스 테이블은 2026-07-02 제거)
@@ -21,7 +21,7 @@
 - 매니저 전용 화면(`api_key_view`)은 `_is_manager()`가 True일 때만 렌더 — 이건 `st.query_params.get("admin")`이 서버의 `MANAGER_TOKEN`(env/secrets)과 일치할 때만이다. `MANAGER_TOKEN`이 미설정이면 항상 False(매니저 화면 전체 비노출)로 안전하게 fail-closed.
 - 로그인/라이센스 시스템을 다시 추가하지 말 것 — 새로고침 시 `st.session_state`가 초기화돼 로그인이 풀리는 문제 때문에 의도적으로 제거함(2026-07-02, `DECISIONS.md`). 상태가 필요하면 세션이 아니라 URL(쿼리파라미터)에 둘 것.
 - 진입점(app.py)의 `_load_env()`는 **프로젝트 `.env` 우선 → 공통 `harness/.env` fallback → 셸 env 무시** 순서로 로드한다(harness/CLAUDE.md 공통 API 키 규칙). 빈 값은 무시(공통값을 덮지 않음), 채워진 값만 `os.environ`에 강제 적용(셸의 낡은 키 shadow 방지).
-- **썸네일 자동화(프로그램이 `chrome.tabs.create()`로 쿠팡 탭을 여는 방식)를 다시 추가하지 말 것.** 실측으로 확정: 쿠팡 봇 차단은 "프로그램이 여는 탭"만 감지하고 "사람이 직접 열고 클릭"하는 탭은 차단하지 않는다(2026-07-02, `DECISIONS.md`). 여러 차례(재시도, active/inactive 전환, 대기시간 조정) 시도했지만 전부 이 구조적 문제를 못 고쳤다. 썸네일은 반드시 `extension/popup.js`(사용자가 쿠팡 페이지에서 직접 확장 클릭)로만 처리할 것 — 웹앱은 "상품 페이지 열기" 링크만 제공.
+- **썸네일을 웹앱에 다시 넣지 말 것** (자동화든, "상품 페이지 열기" 버튼이든). 실측으로 확정: 쿠팡 봇 차단은 "프로그램이 여는 탭"만 감지하고 "사람이 직접 열고 클릭"하는 탭은 차단하지 않는다(2026-07-02, `DECISIONS.md`). 게다가 링크를 만들려면 사용자가 어차피 그 상품 페이지를 이미 열어봤으므로, 웹앱이 "열기" 버튼을 다시 주는 것도 불필요한 군더더기로 판단해 제거함. 썸네일은 오직 `extension/popup.js`(사용자가 원본 쿠팡 탭에서 직접 확장 클릭)로만 처리한다.
 - `extension/background.js`는 PING(설치 확인) 핸들러만 가진다 — 여기에 탭 자동화 로직을 다시 추가하지 말 것.
 - 확장 설치 확인 위젯(`_check_extension_installed`)은 반드시 `st.components.v1.declare_component(path=...)`로 서빙할 것 — `components.v1.html()`(srcdoc iframe)은 프레임 URL이 항상 `about:srcdoc`이라 `externally_connectable` 매칭이 절대 안 되고 `chrome.runtime`이 주입되지 않는다(2026-07-02 근본원인, `DECISIONS.md` 참고). (`_render_copy_box`처럼 확장과 통신하지 않는 위젯은 `components.v1.html()` 그대로 써도 무방 — about:srcdoc 제약은 확장 메시징에만 해당.)
 - `extension/manifest.json`의 `key`(고정 확장 ID `algnnfjoiiepjinfalghfnmmpjedehdg`)와 `externally_connectable.matches`는 임의로 지우지 말 것 — 지우면 웹앱의 설치 확인(PING)이 끊긴다. 배포 도메인이 바뀌면 `matches`에 추가.
