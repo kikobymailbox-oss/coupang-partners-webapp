@@ -63,6 +63,7 @@ async function extractFromUrl(url, originatorTabId) {
   if (!/^https:\/\/[^/]*coupang\.com\//.test(url || "")) {
     throw new Error("쿠팡 상품 링크(coupang.com)만 지원합니다.");
   }
+  const startedAt = Date.now();
   try {
     let result = await attemptExtract(url, HYDRATION_WAIT_MS);
     let attempt = 1;
@@ -70,6 +71,11 @@ async function extractFromUrl(url, originatorTabId) {
     while (attempt < MAX_ATTEMPTS && looksLikeInterstitial(result.candidates, result.debug)) {
       attempt++;
       result = await attemptExtract(url, RETRY_HYDRATION_WAIT_MS);
+    }
+    // 실제로 몇 번 시도했는지·총 소요시간을 진단 정보에 남긴다(재시도가 도는지 직접 확인용).
+    if (result.debug) {
+      result.debug.attempts = attempt;
+      result.debug.elapsedMs = Date.now() - startedAt;
     }
     return result;
   } finally {

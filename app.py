@@ -300,7 +300,8 @@ _THUMBNAIL_WIDGET_HTML = """<!DOCTYPE html>
       if (!resp.candidates || !resp.candidates.length) {
         var d = resp.debug;
         var detail = d
-          ? " (페이지제목: '" + (d.title || "") + "', 전체이미지 " + d.totalImgs + "개, 쿠팡CDN이미지 " + d.cdnHits + "개)"
+          ? " (시도 " + (d.attempts || 1) + "회/" + Math.round((d.elapsedMs || 0) / 1000) + "초, "
+            + "페이지제목: '" + (d.title || "") + "', 전체이미지 " + d.totalImgs + "개, 쿠팡CDN이미지 " + d.cdnHits + "개)"
           : "";
         setMsg("이미지를 찾지 못했습니다." + detail, "error");
         console.log("[쿠팡 썸네일] 진단 정보:", d);
