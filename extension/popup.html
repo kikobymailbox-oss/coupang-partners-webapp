@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 360px; margin: 0; padding: 12px; font-family: -apple-system, "Malgun Gothic", sans-serif; }
+    h1 { font-size: 15px; margin: 0 0 8px; }
+    #hint { font-size: 12px; color: #666; margin-bottom: 8px; }
+    #btn { width: 100%; padding: 8px; font-size: 14px; border: 0; border-radius: 6px;
+           background: #346aff; color: #fff; cursor: pointer; }
+    #btn:disabled { background: #9bb4ff; }
+    #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+    .card { border: 1px solid #eee; border-radius: 6px; overflow: hidden; text-align: center; }
+    .card img { width: 100%; height: 92px; object-fit: cover; display: block; background: #f4f4f4; }
+    .card button { width: 100%; border: 0; padding: 5px 0; font-size: 12px; cursor: pointer;
+                   background: #f2f4f8; }
+    .card button:hover { background: #e2e8f5; }
+    #msg { font-size: 12px; color: #c0392b; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>쿠팡 썸네일 다운로더</h1>
+  <div id="hint">쿠팡 상품 페이지에서 눌러주세요. 후보 중 원하는 1개를 다운로드하면 됩니다.</div>
+  <button id="btn">썸네일 가져오기</button>
+  <div id="msg"></div>
+  <div id="grid"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

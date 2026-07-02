@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "쿠팡 썸네일 다운로더 (팀 내부용)",
+  "version": "1.1.0",
+  "description": "쿠팡 상품 페이지에서 썸네일 후보를 추출해 하나를 골라 다운로드합니다.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3y+1mEzjb1lst2jqbaGKzhfiaS33RhA2irpyR5gr8gihhFddZ+jdAdqSiNq/ntiUXfUIzQ/m8zxdp5WlcyDcCpa6BHg/Bz9IQoMjCOuGUtD7WjS9Bi4qk3c/pNJVzM/K5p8vmB0+heds2/YrO7uHevmcE9fJAW7m6LT1QpU7dNQjecUCrJhQs0stvPdq+5zCAOAB/h9oWyHq+JcNpl7taQiUI+MezNOw1QVQA7heAYgogsRKkdMJ4rt72Kh88emVXGopiffipkgnCru/R/aZZzxa/FQEaATWbA8hWvAUsgtEw0/HBEpuiKGOgOTUmSLMx2QaqHkLsgSP9z7Dv0ThEQIDAQAB",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.coupang.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost/*",
+      "https://*.streamlit.app/*"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "쿠팡 썸네일 다운로더"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.coupang.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
