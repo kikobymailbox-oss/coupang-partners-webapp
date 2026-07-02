@@ -65,7 +65,9 @@ def _render_copy_box(text):
           const box = document.getElementById("box");
           const msg = document.getElementById("msg");
           const value = {safe_text};
-          box.addEventListener("click", function () {{
+          box.addEventListener("click", function (e) {{
+            e.preventDefault();
+            e.stopPropagation();
             navigator.clipboard.writeText(value).then(function () {{
               msg.textContent = "복사되었습니다!";
               setTimeout(function () {{ msg.textContent = ""; }}, 1500);
@@ -87,6 +89,13 @@ def convert_view():
     if not slots:
         st.warning("등록된 슬롯이 없습니다. 매니저에게 슬롯 등록을 요청하세요.")
         return
+
+    # 확장이 설치·정상작동 중이면 가이드를 아예 안 보여준다.
+    # 처음 방문(또는 확장 미설치/미응답)이면 눈에 띄게(펼친 채) 보여준다.
+    ext_id, ext_url = _extension_config()
+    ext_installed = _check_extension_installed(ext_id)
+    if not ext_installed:
+        _render_install_guide(ext_url, expanded=True)
 
     # 같은 이름 슬롯이 있어도 섞이지 않도록 id를 라벨에 포함해 고유화
     slot_label = {f"{s['name']} (#{s['id']})": s["id"] for s in slots}
@@ -127,11 +136,72 @@ def convert_view():
     thumb_url = st.session_state.get("thumbnail_url")
     if thumb_url:
         st.divider()
-        _render_thumbnail_widget(thumb_url)
+        _render_thumbnail_widget(thumb_url, ext_id)
 
 
 # 확장(extension/)의 manifest.json "key" 로부터 고정된 확장 ID. extension/README.md 참고.
 _DEFAULT_EXTENSION_ID = "algnnfjoiiepjinfalghfnmmpjedehdg"
+
+# 확장 설치·정상작동 여부를 감지하는 화면에 안 보이는 위젯.
+# declare_component(path=...)로 실제 URL에 서빙해야 chrome.runtime 이 주입된다(위 이유와 동일).
+# Streamlit.setComponentValue 프로토콜로 True/False 를 파이썬에 돌려준다.
+_EXT_CHECK_DIR = Path(__file__).resolve().parent / "component_ext_check"
+_EXT_CHECK_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8" /></head><body>
+<script>
+(function () {
+  const EXT_ID = "__EXTENSION_ID__";
+
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+
+  function reportInstalled(installed) {
+    send("streamlit:setComponentValue", { value: installed, dataType: "json" });
+  }
+
+  function checkExtension() {
+    if (!window.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+      reportInstalled(false);
+      return;
+    }
+    let done = false;
+    const timer = setTimeout(function () {
+      if (!done) { done = true; reportInstalled(false); }
+    }, 1500);
+    try {
+      chrome.runtime.sendMessage(EXT_ID, { type: "PING" }, function (resp) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reportInstalled(!chrome.runtime.lastError && !!resp && resp.ok === true);
+      });
+    } catch (e) {
+      if (!done) { done = true; clearTimeout(timer); reportInstalled(false); }
+    }
+  }
+
+  window.addEventListener("load", function () {
+    send("streamlit:componentReady", { apiVersion: 1 });
+    send("streamlit:setFrameHeight", { height: 1 });
+    checkExtension();
+  });
+})();
+</script>
+</body></html>
+"""
+
+
+def _check_extension_installed(ext_id: str) -> bool:
+    """확장이 설치되어 PING에 응답하는지 확인한다. 실패/미설치/판단 전이면 False."""
+    try:
+        _EXT_CHECK_DIR.mkdir(exist_ok=True)
+        html_ = _EXT_CHECK_HTML.replace("__EXTENSION_ID__", ext_id)
+        (_EXT_CHECK_DIR / "index.html").write_text(html_, encoding="utf-8")
+        checker = components.declare_component("coupang_ext_check", path=str(_EXT_CHECK_DIR))
+        return bool(checker(key="cp_ext_check", default=False))
+    except Exception:
+        return False
 
 # 이 위젯은 반드시 st.components.v1.declare_component(path=...)로 "실제 URL"에 서빙해야 한다.
 # st.components.v1.html()은 iframe을 srcdoc(문서 URL이 항상 about:srcdoc)으로 렌더링하는데,
@@ -288,14 +358,8 @@ def _build_extension_zip() -> bytes:
     return buf.getvalue()
 
 
-# ------------------------------------------------------------------ 썸네일 위젯 (웹앱 화면 안, 확장과 직접 통신)
-def _render_thumbnail_widget(product_url):
-    st.markdown("**썸네일**")
-    st.caption(
-        "설치된 크롬 확장이 위 링크로 자동으로 이미지를 가져옵니다. "
-        "(브라우저에서 직접 처리 — 서버는 이미지를 보지 않습니다)"
-    )
-
+def _extension_config():
+    """Secrets/env 에서 확장 ID·웹스토어 설치 링크를 읽는다(공통 로직)."""
     ext_id = None
     ext_url = None
     try:
@@ -305,30 +369,50 @@ def _render_thumbnail_widget(product_url):
         pass
     ext_id = ext_id or os.environ.get("CHROME_EXTENSION_ID") or _DEFAULT_EXTENSION_ID
     ext_url = ext_url or os.environ.get("EXTENSION_INSTALL_URL")
+    return ext_id, ext_url
 
-    with st.expander("(첫 실행시) 크롬 확장 프로그램 설치 안내", expanded=False):
-        st.markdown("**1. 파일을 다운로드 받는다**")
-        st.download_button(
-            "⬇️ 확장 프로그램 다운로드 (zip)",
-            data=_build_extension_zip(),
-            file_name=f"{_EXTENSION_ZIP_NAME}.zip",
-            mime="application/zip",
-            type="primary",
-        )
-        st.caption("다운로드한 zip 파일은 압축을 풀어주세요(더블클릭하면 보통 자동으로 풀립니다).")
-        if ext_url:
-            st.caption("또는 크롬 웹스토어에서 바로 설치할 수도 있습니다:")
-            st.link_button("🧩 웹스토어에서 설치하기", ext_url)
 
-        st.markdown("**2. `chrome://extensions/` 에 간다.**")
+def _render_install_guide(ext_url, expanded):
+    """카드 4장(다운로드 → 이동 → 로드 → 완료)으로 구성된 설치 안내."""
+    with st.expander("(첫 실행시) 크롬 확장 프로그램 설치 안내", expanded=expanded):
+        with st.container(border=True):
+            st.markdown("**① 파일을 다운로드 받는다**")
+            st.download_button(
+                "⬇️ 확장 프로그램 다운로드 (zip)",
+                data=_build_extension_zip(),
+                file_name=f"{_EXTENSION_ZIP_NAME}.zip",
+                mime="application/zip",
+                type="primary",
+                key="ext_download_btn",
+            )
+            st.caption("다운로드한 zip 파일은 압축을 풀어주세요(더블클릭하면 보통 자동으로 풀립니다).")
+            if ext_url:
+                st.caption("또는 크롬 웹스토어에서 바로 설치할 수도 있습니다:")
+                st.link_button("🧩 웹스토어에서 설치하기", ext_url)
 
-        st.markdown("**3. 압축해제된 확장 프로그램 로드 버튼을 클릭하여, 압축 해제한 폴더를 선택한다.**")
-        st.image(str(_EXTENSION_DIR / "docs" / "step3_load_button.png"))
+        with st.container(border=True):
+            st.markdown("**② 주소창에 아래 주소로 이동한다**")
+            st.caption("클릭하면 주소가 복사됩니다 → 브라우저 주소창에 붙여넣기(⌘V 또는 Ctrl+V)")
+            _render_copy_box("chrome://extensions/")
 
-        st.markdown("**4. 다음과 같이 보이면 완료.**")
-        st.image(str(_EXTENSION_DIR / "docs" / "step4_installed.png"))
+        with st.container(border=True):
+            st.markdown("**③ 압축해제된 확장 프로그램 로드 → 압축 해제한 폴더를 선택한다**")
+            st.image(str(_EXTENSION_DIR / "docs" / "step3_load_button.png"), width=320)
+
+        with st.container(border=True):
+            st.markdown("**④ 다음과 같이 보이면 완료**")
+            st.image(str(_EXTENSION_DIR / "docs" / "step4_installed.png"), width=320)
 
         st.caption("설치 후에는 위에서 링크 넣고 [생성하기]만 누르면 썸네일도 자동으로 뜹니다.")
+
+
+# ------------------------------------------------------------------ 썸네일 위젯 (웹앱 화면 안, 확장과 직접 통신)
+def _render_thumbnail_widget(product_url, ext_id):
+    st.markdown("**썸네일**")
+    st.caption(
+        "설치된 크롬 확장이 위 링크로 자동으로 이미지를 가져옵니다. "
+        "(브라우저에서 직접 처리 — 서버는 이미지를 보지 않습니다)"
+    )
 
     # 실제 URL로 서빙되는 정적 파일을 매번 최신 EXTENSION_ID/링크로 갱신해 두고,
     # declare_component(path=...)로 그 폴더를 서빙한다(components.v1.html의 srcdoc 문제 회피).
