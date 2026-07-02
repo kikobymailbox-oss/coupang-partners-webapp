@@ -1,8 +1,10 @@
 """쿠팡 파트너스 팀 내부용 링크 생성기 (Streamlit).
 
 기능:
-  1) 쿠팡 링크 -> 파트너스 링크 변환 + 복사, 같은 화면에서 썸네일까지 자동 추출
-  2) (매니저 전용) 슬롯/API키 관리 — 팀원에게는 키가 노출되지 않음
+  1) 쿠팡 링크 -> 파트너스 링크 변환 + 클릭복사
+  2) 썸네일은 자동화하지 않는다 — 상품 페이지 열기 버튼만 제공, 실제 추출은 크롬 확장을
+     사용자가 그 페이지에서 직접 클릭해야 함(쿠팡 봇 차단이 자동화된 탭만 감지하기 때문)
+  3) (매니저 전용) 슬롯/API키 관리 — 팀원에게는 키가 노출되지 않음
 
 접근 구분: 로그인 없음. URL 쿼리파라미터 ?admin=<MANAGER_TOKEN> 이 서버 설정값과 일치할 때만
 매니저 화면(API키 관리)이 추가로 보인다. 세션이 아니라 URL에 상태가 있어 새로고침해도 유지된다.
@@ -90,13 +92,6 @@ def convert_view():
         st.warning("등록된 슬롯이 없습니다. 매니저에게 슬롯 등록을 요청하세요.")
         return
 
-    # 확장이 설치·정상작동 중이면 가이드를 아예 안 보여준다.
-    # 처음 방문(또는 확장 미설치/미응답)이면 눈에 띄게(펼친 채) 보여준다.
-    ext_id, ext_url = _extension_config()
-    ext_installed = _check_extension_installed(ext_id)
-    if not ext_installed:
-        _render_install_guide(ext_url, expanded=True)
-
     # 같은 이름 슬롯이 있어도 섞이지 않도록 id를 라벨에 포함해 고유화
     slot_label = {f"{s['name']} (#{s['id']})": s["id"] for s in slots}
     chosen = st.selectbox("슬롯(계정) 선택", list(slot_label.keys()))
@@ -136,7 +131,7 @@ def convert_view():
     thumb_url = st.session_state.get("thumbnail_url")
     if thumb_url:
         st.divider()
-        _render_thumbnail_widget(thumb_url, ext_id)
+        _render_thumbnail_instructions(thumb_url)
 
 
 # 확장(extension/)의 manifest.json "key" 로부터 고정된 확장 ID. extension/README.md 참고.
@@ -203,141 +198,6 @@ def _check_extension_installed(ext_id: str) -> bool:
     except Exception:
         return False
 
-# 이 위젯은 반드시 st.components.v1.declare_component(path=...)로 "실제 URL"에 서빙해야 한다.
-# st.components.v1.html()은 iframe을 srcdoc(문서 URL이 항상 about:srcdoc)으로 렌더링하는데,
-# 크롬의 externally_connectable 매칭은 프레임의 실제 URL 기준이라 about:srcdoc은
-# 어떤 허용 목록을 넣어도 절대 매칭되지 않아 chrome.runtime 자체가 주입되지 않는다.
-# declare_component(path=...)는 Streamlit 자체 서버가 실제 http(s) 경로로 서빙해 이 문제가 없다.
-_WIDGET_DIR = Path(__file__).resolve().parent / "component_thumbnail"
-
-# 웹앱 페이지 안에서 크롬 확장과 직접 통신하는 위젯.
-# chrome.runtime.sendMessage(EXTENSION_ID, ...) 로 확장에 "URL 추출"/"다운로드"를 요청하며,
-# 서버(Streamlit 파이썬)는 이 과정에 관여하지 않는다 — 이미지가 서버를 거치지 않는다.
-_THUMBNAIL_WIDGET_HTML = """<!DOCTYPE html>
-<html><head><meta charset="utf-8" /></head><body>
-<div id="cp-ext-app" style="font-family:-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif;">
-  <div style="display:flex;gap:8px;">
-    <input id="cp-url" type="text" placeholder="https://www.coupang.com/vp/products/..."
-           style="flex:1;padding:8px;font-size:14px;border:1px solid #ccc;border-radius:6px;" />
-    <button id="cp-go" style="padding:8px 16px;font-size:14px;cursor:pointer;border:0;
-            border-radius:6px;background:#346aff;color:#fff;">가져오기</button>
-  </div>
-  <div id="cp-msg" style="margin-top:10px;font-size:13px;color:#555;"></div>
-  <div id="cp-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;"></div>
-</div>
-<script>
-(function () {
-  const EXT_ID = "__EXTENSION_ID__";
-  const PRODUCT_URL = __PRODUCT_URL_JSON__; // 파이썬에서 json.dumps로 넣은 문자열(따옴표 포함) 또는 null
-  const urlInput = document.getElementById("cp-url");
-  const btn = document.getElementById("cp-go");
-  const msg = document.getElementById("cp-msg");
-  const grid = document.getElementById("cp-grid");
-
-  if (PRODUCT_URL) { urlInput.value = PRODUCT_URL; }
-
-  function setMsg(text, tone) {
-    msg.textContent = text || "";
-    msg.style.color = tone === "error" ? "#c0392b" : tone === "ok" ? "#2e7d32" : "#555";
-  }
-
-  function hasExtensionApi() {
-    return !!(window.chrome && chrome.runtime && chrome.runtime.sendMessage);
-  }
-
-  function download(url, idx) {
-    chrome.runtime.sendMessage(
-      EXT_ID,
-      { type: "DOWNLOAD_IMAGE", url: url, filename: "coupang_thumbnail_" + (idx + 1) + ".jpg" },
-      function (resp) {
-        if (chrome.runtime.lastError || !resp || !resp.ok) {
-          setMsg("다운로드 실패", "error");
-        } else {
-          setMsg("다운로드를 시작했습니다.", "ok");
-        }
-      }
-    );
-  }
-
-  function render(candidates) {
-    grid.innerHTML = "";
-    candidates.forEach(function (c, i) {
-      const card = document.createElement("div");
-      card.style.cssText = "border:1px solid #eee;border-radius:8px;overflow:hidden;text-align:center;";
-      const img = document.createElement("img");
-      img.src = c.url;
-      img.referrerPolicy = "no-referrer";
-      img.style.cssText = "width:100%;height:110px;object-fit:cover;display:block;background:#f4f4f4;";
-      img.onerror = function () { img.style.opacity = "0.25"; };
-      const b = document.createElement("button");
-      b.textContent = "⬇ 다운로드";
-      b.style.cssText = "width:100%;border:0;padding:6px 0;cursor:pointer;background:#f2f4f8;";
-      b.onclick = function () { download(c.url, i); };
-      card.appendChild(img);
-      card.appendChild(b);
-      grid.appendChild(card);
-    });
-  }
-
-  function runExtract() {
-    const url = urlInput.value.trim();
-    grid.innerHTML = "";
-    if (!url) { setMsg("쿠팡 상품 링크를 입력하세요.", "error"); return; }
-    if (!hasExtensionApi()) {
-      setMsg("크롬 브라우저에서, 확장 프로그램을 설치한 뒤 이용해주세요.", "error");
-      return;
-    }
-    setMsg("이미지를 가져오는 중입니다... (드물게 최대 15초 정도 걸릴 수 있어요)");
-    chrome.runtime.sendMessage(EXT_ID, { type: "EXTRACT_URL", url: url }, function (resp) {
-      if (chrome.runtime.lastError) {
-        setMsg("확장 프로그램을 찾을 수 없습니다. 설치되어 있는지 확인해주세요.", "error");
-        return;
-      }
-      if (!resp || !resp.ok) {
-        setMsg((resp && resp.error) || "이미지를 가져오지 못했습니다.", "error");
-        return;
-      }
-      if (!resp.candidates || !resp.candidates.length) {
-        var d = resp.debug;
-        var detail = d
-          ? " (시도 " + (d.attempts || 1) + "회/" + Math.round((d.elapsedMs || 0) / 1000) + "초, "
-            + "페이지제목: '" + (d.title || "") + "', 전체이미지 " + d.totalImgs + "개, 쿠팡CDN이미지 " + d.cdnHits + "개)"
-          : "";
-        setMsg("이미지를 찾지 못했습니다." + detail, "error");
-        console.log("[쿠팡 썸네일] 진단 정보:", d);
-        return;
-      }
-      setMsg("후보 " + resp.candidates.length + "개를 찾았습니다. 원하는 이미지의 다운로드를 누르세요.", "ok");
-      render(resp.candidates);
-    });
-  }
-
-  btn.addEventListener("click", runExtract);
-  // 위쪽 파트너스 링크 입력값이 그대로 넘어온 경우, 클릭 없이 자동으로 한 번 실행한다.
-  if (PRODUCT_URL) {
-    window.addEventListener("load", runExtract);
-  }
-})();
-
-// Streamlit 커스텀 컴포넌트 프로토콜(최소): 부모 프레임에 준비완료·높이를 알려준다.
-(function () {
-  function send(type, extra) {
-    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
-  }
-  function reportHeight() {
-    send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight });
-  }
-  window.addEventListener("load", function () {
-    send("streamlit:componentReady", { apiVersion: 1 });
-    reportHeight();
-  });
-  new MutationObserver(reportHeight).observe(document.body, { childList: true, subtree: true });
-})();
-</script>
-</body></html>
-"""
-
-
 # 확장 소스 폴더와, 배포용 zip에 담을 파일 목록(문서/스크린샷은 제외해 용량을 줄인다)
 _EXTENSION_DIR = Path(__file__).resolve().parent / "extension"
 _EXTENSION_ZIP_FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"]
@@ -373,63 +233,56 @@ def _extension_config():
     return ext_id, ext_url
 
 
-def _render_install_guide(ext_url, expanded):
-    """카드 4장(다운로드 → 이동 → 로드 → 완료)으로 구성된 설치 안내."""
-    with st.expander("(첫 실행시) 크롬 확장 프로그램 설치 안내", expanded=expanded):
-        with st.container(border=True):
-            st.markdown("**① 파일을 다운로드 받는다**")
-            st.download_button(
-                "⬇️ 확장 프로그램 다운로드 (zip)",
-                data=_build_extension_zip(),
-                file_name=f"{_EXTENSION_ZIP_NAME}.zip",
-                mime="application/zip",
-                type="primary",
-                key="ext_download_btn",
-            )
-            st.caption("다운로드한 zip 파일은 압축을 풀어주세요(더블클릭하면 보통 자동으로 풀립니다).")
-            if ext_url:
-                st.caption("또는 크롬 웹스토어에서 바로 설치할 수도 있습니다:")
-                st.link_button("🧩 웹스토어에서 설치하기", ext_url)
+def _render_install_guide_body(ext_url):
+    """카드 4장(다운로드 → 이동 → 로드 → 완료)으로 구성된 설치 안내 내용물."""
+    with st.container(border=True):
+        st.markdown("**① 파일을 다운로드 받는다**")
+        st.download_button(
+            "⬇️ 확장 프로그램 다운로드 (zip)",
+            data=_build_extension_zip(),
+            file_name=f"{_EXTENSION_ZIP_NAME}.zip",
+            mime="application/zip",
+            type="primary",
+            key="ext_download_btn",
+        )
+        st.caption("다운로드한 zip 파일은 압축을 풀어주세요(더블클릭하면 보통 자동으로 풀립니다).")
+        if ext_url:
+            st.caption("또는 크롬 웹스토어에서 바로 설치할 수도 있습니다:")
+            st.link_button("🧩 웹스토어에서 설치하기", ext_url)
 
-        with st.container(border=True):
-            st.markdown("**② 주소창에 아래 주소로 이동한다**")
-            st.caption("클릭하면 주소가 복사됩니다 → 브라우저 주소창에 붙여넣기(⌘V 또는 Ctrl+V)")
-            _render_copy_box("chrome://extensions/")
+    with st.container(border=True):
+        st.markdown("**② 주소창에 아래 주소로 이동한다**")
+        st.caption("클릭하면 주소가 복사됩니다 → 브라우저 주소창에 붙여넣기(⌘V 또는 Ctrl+V)")
+        _render_copy_box("chrome://extensions/")
 
-        with st.container(border=True):
-            st.markdown("**③ 압축해제된 확장 프로그램 로드 → 압축 해제한 폴더를 선택한다**")
-            st.image(str(_EXTENSION_DIR / "docs" / "step3_load_button.png"), width=320)
+    with st.container(border=True):
+        st.markdown("**③ 압축해제된 확장 프로그램 로드 → 압축 해제한 폴더를 선택한다**")
+        st.image(str(_EXTENSION_DIR / "docs" / "step3_load_button.png"), width=320)
 
-        with st.container(border=True):
-            st.markdown("**④ 다음과 같이 보이면 완료**")
-            st.image(str(_EXTENSION_DIR / "docs" / "step4_installed.png"), width=320)
+    with st.container(border=True):
+        st.markdown("**④ 다음과 같이 보이면 완료**")
+        st.image(str(_EXTENSION_DIR / "docs" / "step4_installed.png"), width=320)
 
-        st.caption("설치 후에는 위에서 링크 넣고 [생성하기]만 누르면 썸네일도 자동으로 뜹니다.")
-
-
-# ------------------------------------------------------------------ 썸네일 위젯 (웹앱 화면 안, 확장과 직접 통신)
-def _render_thumbnail_widget(product_url, ext_id):
-    st.markdown("**썸네일**")
     st.caption(
-        "설치된 크롬 확장이 위 링크로 자동으로 이미지를 가져옵니다. "
-        "(브라우저에서 직접 처리 — 서버는 이미지를 보지 않습니다)"
+        "설치 후 사용법: 쿠팡 상품 페이지를 직접 연 다음, 브라우저 툴바의 확장 아이콘을 눌러 "
+        "[썸네일 가져오기]를 누르세요."
     )
 
-    # 실제 URL로 서빙되는 정적 파일을 매번 최신 EXTENSION_ID/링크로 갱신해 두고,
-    # declare_component(path=...)로 그 폴더를 서빙한다(components.v1.html의 srcdoc 문제 회피).
-    try:
-        _WIDGET_DIR.mkdir(exist_ok=True)
-        widget_html = _THUMBNAIL_WIDGET_HTML.replace("__EXTENSION_ID__", ext_id).replace(
-            "__PRODUCT_URL_JSON__", json.dumps(product_url)
-        )
-        (_WIDGET_DIR / "index.html").write_text(widget_html, encoding="utf-8")
-        thumbnail_widget = components.declare_component(
-            "coupang_thumbnail_widget", path=str(_WIDGET_DIR)
-        )
-        # 링크가 바뀌면 key도 바뀌어 위젯이 새로 마운트되고, 새 링크로 자동 실행된다.
-        thumbnail_widget(key=f"cp_thumbnail_widget_{abs(hash(product_url)) % 100000}")
-    except Exception as e:
-        st.error(f"썸네일 위젯을 불러오지 못했습니다: {e}")
+
+@st.dialog("🧩 크롬 확장 프로그램 설치 안내", width="large")
+def _install_guide_dialog(ext_url):
+    _render_install_guide_body(ext_url)
+
+
+# ------------------------------------------------------------------ 썸네일 안내 (직접 클릭 방식)
+def _render_thumbnail_instructions(product_url):
+    st.markdown("**썸네일**")
+    st.caption(
+        "쿠팡이 자동화된 접근을 차단하기 때문에, 썸네일은 이 상품 페이지를 직접 열어 "
+        "확장 아이콘을 눌러야 안정적으로 받아집니다."
+    )
+    st.link_button("🛍️ 이 쿠팡 상품 페이지 열기", product_url)
+    st.caption("페이지가 열리면 → 브라우저 툴바의 확장 아이콘 클릭 → [썸네일 가져오기] → 원하는 이미지 다운로드")
 
 
 # ------------------------------------------------------------------ API 키 관리 (매니저)
@@ -513,11 +366,26 @@ def _is_manager() -> bool:
 # ------------------------------------------------------------------ 메인
 def main():
     is_manager = _is_manager()
+    ext_id, ext_url = _extension_config()
+    ext_installed = _check_extension_installed(ext_id)
 
     with st.sidebar:
         st.write("🛠️ **매니저 모드**" if is_manager else "👤 **팀원 모드**")
         if not storage.use_supabase():
             st.caption("⚠️ 로컬 모드")
+
+        st.divider()
+        if ext_installed:
+            if st.button("🧩 확장 설치 안내"):
+                _install_guide_dialog(ext_url)
+        else:
+            if st.button("⚠️ 확장 설치 안내 (필요)", type="primary"):
+                _install_guide_dialog(ext_url)
+
+    # 확장이 없으면(또는 판단 전이면) 첫 방문 시 한 번은 안내를 자동으로 띄운다.
+    if not ext_installed and not st.session_state.get("guide_auto_shown"):
+        st.session_state.guide_auto_shown = True
+        _install_guide_dialog(ext_url)
 
     tab_titles = ["파트너스 링크"]
     if is_manager:
