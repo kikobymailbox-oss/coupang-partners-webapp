@@ -2,9 +2,10 @@
 
 기능:
   1) 쿠팡 링크 -> 파트너스 링크 변환 + 클릭복사
-  2) 썸네일은 자동화하지 않는다 — 상품 페이지 열기 버튼만 제공, 실제 추출은 크롬 확장을
-     사용자가 그 페이지에서 직접 클릭해야 함(쿠팡 봇 차단이 자동화된 탭만 감지하기 때문)
-  3) (매니저 전용) 슬롯/API키 관리 — 팀원에게는 키가 노출되지 않음
+  2) (매니저 전용) 슬롯/API키 관리 — 팀원에게는 키가 노출되지 않음
+
+썸네일: 이 웹앱에는 없다. 링크를 만들려면 어차피 쿠팡 상품 페이지를 이미 열어봐야 하므로,
+그 페이지에서 크롬 확장(popup.js) 아이콘을 직접 클릭해 받는다(사이드바 → 확장 설치 안내).
 
 접근 구분: 로그인 없음. URL 쿼리파라미터 ?admin=<MANAGER_TOKEN> 이 서버 설정값과 일치할 때만
 매니저 화면(API키 관리)이 추가로 보인다. 세션이 아니라 URL에 상태가 있어 새로고침해도 유지된다.
@@ -84,9 +85,9 @@ def _render_copy_box(text):
     )
 
 
-# ------------------------------------------------------------------ 기능1+2: 링크 변환 + 썸네일 (한 화면)
+# ------------------------------------------------------------------ 기능1: 파트너스 링크 변환
 def convert_view():
-    st.subheader("파트너스 링크 생성 + 썸네일")
+    st.subheader("파트너스 링크 생성")
     slots = storage.list_slots()
     if not slots:
         st.warning("등록된 슬롯이 없습니다. 매니저에게 슬롯 등록을 요청하세요.")
@@ -120,18 +121,11 @@ def convert_view():
                     st.error(result)
                 else:
                     st.session_state.convert_result = result
-                # 링크 변환 성공/실패와 무관하게 썸네일은 항상 시도한다(둘은 독립 기능).
-                st.session_state.thumbnail_url = url
 
     for item in st.session_state.get("convert_result", []):
         short = item.get("shortenUrl") or item.get("landingUrl") or ""
         st.markdown("**변환된 파트너스 링크** (클릭하면 복사됩니다)")
         _render_copy_box(short)
-
-    thumb_url = st.session_state.get("thumbnail_url")
-    if thumb_url:
-        st.divider()
-        _render_thumbnail_instructions(thumb_url)
 
 
 # 확장(extension/)의 manifest.json "key" 로부터 고정된 확장 ID. extension/README.md 참고.
@@ -272,17 +266,6 @@ def _render_install_guide_body(ext_url):
 @st.dialog("🧩 크롬 확장 프로그램 설치 안내", width="large")
 def _install_guide_dialog(ext_url):
     _render_install_guide_body(ext_url)
-
-
-# ------------------------------------------------------------------ 썸네일 안내 (직접 클릭 방식)
-def _render_thumbnail_instructions(product_url):
-    st.markdown("**썸네일**")
-    st.caption(
-        "쿠팡이 자동화된 접근을 차단하기 때문에, 썸네일은 이 상품 페이지를 직접 열어 "
-        "확장 아이콘을 눌러야 안정적으로 받아집니다."
-    )
-    st.link_button("🛍️ 이 쿠팡 상품 페이지 열기", product_url)
-    st.caption("페이지가 열리면 → 브라우저 툴바의 확장 아이콘 클릭 → [썸네일 가져오기] → 원하는 이미지 다운로드")
 
 
 # ------------------------------------------------------------------ API 키 관리 (매니저)
