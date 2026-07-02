@@ -8,8 +8,10 @@
 매니저 화면(API키 관리)이 추가로 보인다. 세션이 아니라 URL에 상태가 있어 새로고침해도 유지된다.
 """
 import html
+import io
 import json
 import os
+import zipfile
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -265,6 +267,27 @@ _THUMBNAIL_WIDGET_HTML = """<!DOCTYPE html>
 """
 
 
+# 확장 소스 폴더와, 배포용 zip에 담을 파일 목록(문서/스크린샷은 제외해 용량을 줄인다)
+_EXTENSION_DIR = Path(__file__).resolve().parent / "extension"
+_EXTENSION_ZIP_FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"]
+_EXTENSION_ZIP_NAME = "coupang-thumbnail-extension"
+
+
+def _build_extension_zip() -> bytes:
+    """확장 폴더를 매 요청 시 새로 압축해 반환한다(파일이 최신 상태로 항상 동기화됨).
+
+    압축 해제 시 파일이 흩어지지 않도록 zip 내부에 폴더(_EXTENSION_ZIP_NAME)를 두어
+    사용자가 그 폴더를 그대로 "압축해제된 확장 프로그램 로드"에서 선택하면 되게 한다.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in _EXTENSION_ZIP_FILES:
+            fpath = _EXTENSION_DIR / fname
+            if fpath.exists():
+                zf.write(fpath, arcname=f"{_EXTENSION_ZIP_NAME}/{fname}")
+    return buf.getvalue()
+
+
 # ------------------------------------------------------------------ 썸네일 위젯 (웹앱 화면 안, 확장과 직접 통신)
 def _render_thumbnail_widget(product_url):
     st.markdown("**썸네일**")
@@ -283,24 +306,38 @@ def _render_thumbnail_widget(product_url):
     ext_id = ext_id or os.environ.get("CHROME_EXTENSION_ID") or _DEFAULT_EXTENSION_ID
     ext_url = ext_url or os.environ.get("EXTENSION_INSTALL_URL")
 
-    with st.expander("최초 1회: 크롬 확장 프로그램 설치 안내", expanded=False):
-        st.markdown(
-            "1. (최초 1회) 팀 크롬 확장 프로그램을 설치합니다.\n"
-            "2. 설치 후에는 위에서 링크 넣고 [생성하기]만 누르면 썸네일도 자동으로 뜹니다."
+    with st.expander("(첫 실행시) 크롬 확장 프로그램 설치 안내", expanded=False):
+        st.markdown("**1. 파일을 다운로드 받는다**")
+        st.download_button(
+            "⬇️ 확장 프로그램 다운로드 (zip)",
+            data=_build_extension_zip(),
+            file_name=f"{_EXTENSION_ZIP_NAME}.zip",
+            mime="application/zip",
+            type="primary",
         )
+        st.caption("다운로드한 zip 파일은 압축을 풀어주세요(더블클릭하면 보통 자동으로 풀립니다).")
         if ext_url:
-            st.link_button("🧩 확장 프로그램 설치하기", ext_url)
-        else:
-            st.caption("설치 파일은 `extension/` 폴더 참고 (extension/README.md).")
+            st.caption("또는 크롬 웹스토어에서 바로 설치할 수도 있습니다:")
+            st.link_button("🧩 웹스토어에서 설치하기", ext_url)
+
+        st.markdown("**2. `chrome://extensions/` 에 간다.**")
+
+        st.markdown("**3. 압축해제된 확장 프로그램 로드 버튼을 클릭하여, 압축 해제한 폴더를 선택한다.**")
+        st.image(str(_EXTENSION_DIR / "docs" / "step3_load_button.png"))
+
+        st.markdown("**4. 다음과 같이 보이면 완료.**")
+        st.image(str(_EXTENSION_DIR / "docs" / "step4_installed.png"))
+
+        st.caption("설치 후에는 위에서 링크 넣고 [생성하기]만 누르면 썸네일도 자동으로 뜹니다.")
 
     # 실제 URL로 서빙되는 정적 파일을 매번 최신 EXTENSION_ID/링크로 갱신해 두고,
     # declare_component(path=...)로 그 폴더를 서빙한다(components.v1.html의 srcdoc 문제 회피).
     try:
         _WIDGET_DIR.mkdir(exist_ok=True)
-        html = _THUMBNAIL_WIDGET_HTML.replace("__EXTENSION_ID__", ext_id).replace(
+        widget_html = _THUMBNAIL_WIDGET_HTML.replace("__EXTENSION_ID__", ext_id).replace(
             "__PRODUCT_URL_JSON__", json.dumps(product_url)
         )
-        (_WIDGET_DIR / "index.html").write_text(html, encoding="utf-8")
+        (_WIDGET_DIR / "index.html").write_text(widget_html, encoding="utf-8")
         thumbnail_widget = components.declare_component(
             "coupang_thumbnail_widget", path=str(_WIDGET_DIR)
         )
