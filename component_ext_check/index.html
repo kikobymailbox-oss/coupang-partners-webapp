@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /></head><body>
+<script>
+(function () {
+  const EXT_ID = "algnnfjoiiepjinfalghfnmmpjedehdg";
+
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+
+  function reportInstalled(installed) {
+    send("streamlit:setComponentValue", { value: installed, dataType: "json" });
+  }
+
+  function checkExtension() {
+    if (!window.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+      reportInstalled(false);
+      return;
+    }
+    let done = false;
+    const timer = setTimeout(function () {
+      if (!done) { done = true; reportInstalled(false); }
+    }, 1500);
+    try {
+      chrome.runtime.sendMessage(EXT_ID, { type: "PING" }, function (resp) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reportInstalled(!chrome.runtime.lastError && !!resp && resp.ok === true);
+      });
+    } catch (e) {
+      if (!done) { done = true; clearTimeout(timer); reportInstalled(false); }
+    }
+  }
+
+  window.addEventListener("load", function () {
+    send("streamlit:componentReady", { apiVersion: 1 });
+    send("streamlit:setFrameHeight", { height: 1 });
+    checkExtension();
+  });
+})();
+</script>
+</body></html>
